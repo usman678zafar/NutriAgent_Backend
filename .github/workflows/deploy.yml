@@ -1,0 +1,23 @@
+name: Sync to Hugging Face Hub
+
+on:
+  push:
+    branches:
+      - main  # Set this to the branch you want to deploy from (e.g. main or master)
+  workflow_dispatch: # Allows you to manually trigger the deployment from GitHub UI
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          lfs: true
+      
+      - name: Push to HF Hub
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          # Replace 'usman678zafar/NutriAgent-Backend' with your actual HF username and Space name if different!
+          git push --force https://usman678zafar:$HF_TOKEN@huggingface.co/spaces/usman678zafar/NutriAgent-Backend main
