@@ -1,4 +1,13 @@
-"# NutriAgent_Backend" 
+---
+title: NutriAgent Backend
+emoji: 🥑
+colorFrom: green
+colorTo: blue
+sdk: docker
+pinned: false
+---
+
+# NutriAgent_Backend
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
