@@ -17,6 +17,12 @@ class UserLogin(BaseModel):
 class UserResponse(UserBase):
     id: UUID
     created_at: datetime
+    weight: Optional[float] = None
+    height: Optional[float] = None
+    age: Optional[float] = None
+    gender: Optional[str] = None
+    activity_level: Optional[str] = None
+    goal: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -48,6 +54,7 @@ class MealBase(BaseModel):
     protein: float
     carbs: float
     fats: float
+    source: Optional[str] = "manual"
 
 class MealCreate(MealBase):
     pass
@@ -74,3 +81,17 @@ class AdjustmentResponse(BaseModel):
     created_at: datetime
     class Config:
         from_attributes = True
+
+class MealEstimateRequest(BaseModel):
+    food: str
+
+class MealScanRequest(BaseModel):
+    image: str # Base64 encoded image
+
+class MealScanResponse(BaseModel):
+    food_name: str
+    calories: float
+    protein: float
+    carbs: float
+    fats: float
+    description: Optional[str] = None

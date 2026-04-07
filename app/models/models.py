@@ -55,6 +55,7 @@ class Meal(Base):
     protein = Column(Float, nullable=False)
     carbs = Column(Float, nullable=False)
     fats = Column(Float, nullable=False)
+    source = Column(String, nullable=False, default="manual")
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
 
     user = relationship("User", back_populates="meals")

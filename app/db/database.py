@@ -20,6 +20,8 @@ ssl_context.verify_mode = ssl.CERT_NONE
 engine = create_async_engine(
     clean_url,
     echo=True,
+    pool_pre_ping=True,
+    pool_recycle=300,
     connect_args={
         "ssl": ssl_context,
         "statement_cache_size": 0,  # Required for Supabase transaction-mode pooler

@@ -5,11 +5,16 @@ from sqlalchemy.future import select
 from sqlalchemy import desc
 from app.db.database import get_db, engine
 from app.models.models import Base, User, BodyMetrics, DailyTarget, Meal, WeeklyAdjustment
-from app.models.schemas import UserCreate, UserLogin, UserResponse, Token, MetricsCreate, MetricsResponse, MealCreate, MealResponse, TargetResponse
+from app.models.schemas import (
+    UserCreate, UserLogin, UserResponse, Token, MetricsCreate, 
+    MetricsResponse, MealCreate, MealResponse, TargetResponse,
+    MealEstimateRequest, MealScanRequest, MealScanResponse
+)
 from app.auth import get_password_hash, verify_password, create_access_token, get_current_user
 from app.agents.planner import PlannerAgent
 import uuid
 import datetime
+from typing import Optional
 
 app = FastAPI(title="NutriAgent AI API")
 
@@ -68,6 +73,25 @@ async def get_me(db: AsyncSession = Depends(get_db), current_user_id: str = Depe
     user = result.scalars().first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    
+    # Fetch latest metrics for onboarding status
+    metrics_result = await db.execute(
+        select(BodyMetrics)
+        .where(BodyMetrics.user_id == user.id)
+        .order_by(desc(BodyMetrics.recorded_at))
+        .limit(1)
+    )
+    latest_metrics = metrics_result.scalars().first()
+    
+    # Enrichment for frontend
+    if latest_metrics:
+        user.weight = latest_metrics.weight
+        user.height = latest_metrics.height
+        user.age = latest_metrics.age
+        user.gender = latest_metrics.gender
+        user.activity_level = latest_metrics.activity_level
+        user.goal = latest_metrics.goal
+        
     return user
 
 @app.post("/metrics", response_model=TargetResponse)
@@ -130,19 +154,30 @@ async def get_metrics_history(db: AsyncSession = Depends(get_db), current_user_i
 
 @app.post("/meals", response_model=MealResponse)
 async def log_meal(meal: MealCreate, db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
-    db_meal = Meal(**meal.dict(), user_id=current_user_id)
+    meal_data = meal.dict()
+    meal_data["meal_type"] = meal_data["meal_type"].lower()
+    db_meal = Meal(**meal_data, user_id=current_user_id)
     db.add(db_meal)
     await db.commit()
     await db.refresh(db_meal)
     return db_meal
 
-@app.get("/meals/today", response_model=list[MealResponse])
-async def get_today_meals(db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
-    today = datetime.datetime.utcnow().date()
-    start_of_day = datetime.datetime.combine(today, datetime.time.min)
+@app.get("/meals", response_model=list[MealResponse])
+async def get_meals(date: Optional[str] = None, db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
+    if date:
+        try:
+            target_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    else:
+        target_date = datetime.datetime.utcnow().date()
+        
+    start_of_day = datetime.datetime.combine(target_date, datetime.time.min)
+    end_of_day = datetime.datetime.combine(target_date, datetime.time.max)
+    
     result = await db.execute(
         select(Meal)
-        .where(Meal.user_id == current_user_id, Meal.timestamp >= start_of_day)
+        .where(Meal.user_id == current_user_id, Meal.timestamp >= start_of_day, Meal.timestamp <= end_of_day)
     )
     return result.scalars().all()
 
@@ -216,16 +251,19 @@ async def get_suggestions(db: AsyncSession = Depends(get_db), current_user_id: s
     suggestions = await planner.get_meal_suggestions(targets)
     return suggestions
 
-@app.post("/meals/estimate")
-async def estimate_meal(query: dict, current_user_id: str = Depends(get_current_user)):
-    # query format: {"food": "text description"}
-    food_query = query.get("food", "")
-    if not food_query:
-        raise HTTPException(status_code=400, detail="Food description is required")
-        
+@app.post("/meals/estimate", response_model=MealScanResponse)
+async def estimate_meal(request: MealEstimateRequest, current_user_id: str = Depends(get_current_user)):
     # Delegate to AI Agent
-    estimation = await planner.estimate_meal(food_query)
+    estimation = await planner.estimate_meal(request.food)
     return estimation
+
+@app.post("/meals/scan", response_model=MealScanResponse)
+async def scan_meal(request: MealScanRequest, current_user_id: str = Depends(get_current_user)):
+    # Delegate to AI Agent with image
+    result = await planner.scan_meal(request.image)
+    if not result:
+        raise HTTPException(status_code=500, detail="Image scan failed")
+    return result
 
 @app.get("/insights/habits")
 async def get_habit_insights(db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):

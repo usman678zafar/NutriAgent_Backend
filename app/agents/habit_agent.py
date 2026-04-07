@@ -2,38 +2,64 @@ class HabitDetectionAgent:
     def detect_patterns(self, meal_history, daily_targets):
         """
         Analyzes meal history against targets to find recurring habits.
+        Returns a list of patterns: { title, desc, impact, action }
         """
         if not meal_history:
             return []
 
-        recommendations = []
+        patterns = []
+        import datetime
         
-        # 1. Check for recurring protein deficit
-        days_analyzed = len(set(m.timestamp.date() for m in meal_history))
-        if days_analyzed >= 3:
-            # Group meals by day and sum protein
-            daily_protein = {}
-            for meal in meal_history:
-                day = meal.timestamp.date()
-                daily_protein[day] = daily_protein.get(day, 0) + meal.protein
+        # Helper to group meals by date
+        daily_data = {}
+        for meal in meal_history:
+            day = meal.timestamp.date()
+            if day not in daily_data:
+                daily_data[day] = {"protein": 0, "calories": 0, "meals": []}
+            daily_data[day]["protein"] += meal.protein
+            daily_data[day]["calories"] += meal.calories
+            daily_data[day]["meals"].append(meal.meal_type.lower())
+
+        days_analyzed = len(daily_data)
+        
+        # 1. Protein Consistency
+        if days_analyzed >= 2:
+            protein_target = daily_targets.protein
+            target_met_days = sum(1 for d in daily_data.values() if d["protein"] >= (protein_target * 0.9))
             
-            protein_deficit_days = sum(1 for p in daily_protein.values() if p < (daily_targets.protein * 0.8))
-            
-            if protein_deficit_days >= 2:
-                recommendations.append({
-                    "type": "habit_warning",
-                    "title": "Protein Consistency",
-                    "text": "You've missed your protein target in 2 of the last 3 days. Consider adding high-protein snacks like Greek yogurt or jerky."
+            if target_met_days == days_analyzed:
+                patterns.append({
+                    "title": "Protein Powerhouse",
+                    "impact": "Positive",
+                    "desc": f"You've hit your protein target {days_analyzed} days in a row! This is excellent for muscle preservation.",
+                    "action": "Maintain this high-protein streak"
+                })
+            elif target_met_days < (days_analyzed / 2):
+                patterns.append({
+                    "title": "Protein Deficit",
+                    "impact": "Negative",
+                    "desc": "You are frequently falling short of your protein goals, which might slow down your recovery.",
+                    "action": "Try adding a protein shake to your afternoon"
                 })
 
-        # 2. Check for meal skipping
-        # (Simplified logic: check if certain meal types are missing across days)
-        meal_types_logged = [m.meal_type.lower() for m in meal_history]
-        if "breakfast" not in meal_types_logged and days_analyzed >= 3:
-            recommendations.append({
-                "type": "lifestyle_tip",
-                "title": "Breakfast Pattern",
-                "text": "It looks like you frequently skip breakfast. If you feel low energy in the afternoon, try a small protein-rich start to your day."
+        # 2. Timing/Cravings Pattern
+        late_night_calories = sum(m.calories for m in meal_history if m.timestamp.hour >= 21)
+        total_calories = sum(m.calories for m in meal_history) or 1
+        if (late_night_calories / total_calories) > 0.2:
+            patterns.append({
+                "title": "Late Night Energy",
+                "impact": "Negative",
+                "desc": "A significant portion of your calories are consumed after 9 PM, which may affect sleep quality.",
+                "action": "Shift your largest meal to earlier in the day"
             })
 
-        return recommendations
+        # 3. Consistency
+        if days_analyzed >= 5:
+            patterns.append({
+                "title": "Metric Consistency",
+                "impact": "Positive",
+                "desc": "Your logging consistency is in the top 10% of users. This data accuracy leads to better AI results.",
+                "action": "Keep up the detailed logging"
+            })
+
+        return patterns

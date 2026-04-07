@@ -54,7 +54,7 @@ class MealAgent:
             Food: {food_query}
             """
             try:
-                response = self.model.generate_content(prompt)
+                response = await self.model.generate_content_async(prompt)
                 text = response.text.strip()
                 # Clean up JSON formatting if present
                 if "```json" in text:
@@ -97,6 +97,45 @@ class MealAgent:
             "carbs": 40,
             "fats": 10
         }
+
+    async def scan_food_image(self, base64_image: str):
+        """
+        Uses Gemini Vision to identify food and estimate nutrients from an image.
+        """
+        if not self.model:
+            return None
+            
+        prompt = """
+        Identify the food in this image and provide estimated nutritional data for the entire meal shown.
+        Return the result ONLY as a JSON object with these keys: 
+        "food_name", "calories", "protein", "carbs", "fats", "description".
+        "description" should be a 1-sentence analysis of the meal's healthiness.
+        Ensure all nutritional values are numbers.
+        """
+        
+        try:
+            # Prepare image for Gemini
+            import base64
+            image_data = base64.b64decode(base64_image.split(",")[-1])
+            
+            contents = [
+                prompt,
+                {"mime_type": "image/jpeg", "data": image_data}
+            ]
+            
+            response = await self.model.generate_content_async(contents)
+            text = response.text.strip()
+            
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            data = json.loads(text)
+            return data
+        except Exception as e:
+            print(f"Gemini image scan failed: {e}")
+            return None
 
     def generate_meal_plan(self, target_calories, target_protein, target_carbs, target_fats):
         plan = []

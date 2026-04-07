@@ -71,3 +71,9 @@ class PlannerAgent:
         Use AI to estimate macros for a specific food description.
         """
         return await self.meal_agent.estimate_nutrients(food_query)
+
+    async def scan_meal(self, base64_image: str):
+        """
+        Use AI Vision to scan meal from an image.
+        """
+        return await self.meal_agent.scan_food_image(base64_image)
