@@ -33,6 +33,10 @@ async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+@app.get("/")
+async def root():
+    return {"message": "NutriAgent API is up and running! 🥑", "status": "healthy"}
+
 @app.post("/auth/register", response_model=UserResponse)
 async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
     import traceback
