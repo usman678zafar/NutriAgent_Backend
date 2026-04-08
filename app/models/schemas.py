@@ -23,6 +23,7 @@ class UserResponse(UserBase):
     gender: Optional[str] = None
     activity_level: Optional[str] = None
     goal: Optional[str] = None
+    target_weight: Optional[float] = None
     class Config:
         from_attributes = True
 
@@ -37,6 +38,7 @@ class MetricsBase(BaseModel):
     gender: str
     activity_level: str
     goal: str
+    target_weight: Optional[float] = None
 
 class MetricsCreate(MetricsBase):
     pass

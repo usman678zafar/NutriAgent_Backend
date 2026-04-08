@@ -114,6 +114,7 @@ async def get_me(db: AsyncSession = Depends(get_db), current_user_id: str = Depe
         user.gender = latest_metrics.gender
         user.activity_level = latest_metrics.activity_level
         user.goal = latest_metrics.goal
+        user.target_weight = latest_metrics.target_weight
         
     return user
 

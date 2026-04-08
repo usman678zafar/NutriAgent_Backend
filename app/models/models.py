@@ -29,6 +29,7 @@ class BodyMetrics(Base):
     gender = Column(String, nullable=False) # male, female
     activity_level = Column(String, nullable=False) # sedentary, light, moderate, active, very_active
     goal = Column(String, nullable=False) # loss, gain, maintain
+    target_weight = Column(Float, nullable=True)
     recorded_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     user = relationship("User", back_populates="metrics")
