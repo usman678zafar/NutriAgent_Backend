@@ -4,9 +4,11 @@ import json
 import google.generativeai as genai
 from openai import AsyncOpenAI
 import base64
+from dotenv import load_dotenv
 
 class MealAgent:
     def __init__(self):
+        load_dotenv()
         self.meal_database = {
             "breakfast": [
                 {"name": "Oatmeal with protein powder and berries", "protein": 30, "carbs": 50, "fats": 8},
@@ -52,11 +54,23 @@ class MealAgent:
     async def estimate_nutrients(self, food_query: str):
         """
         AI Agent reasoning: 
-        1. Try NVIDIA LLM for global knowledge.
-        2. Fallback to Gemini LLM.
-        3. Fallback to Local Knowledge Base.
-        4. Fallback to Heuristic Default.
+        1. Check for basic items like water first.
+        2. Try NVIDIA LLM for global knowledge.
+        3. Fallback to Gemini LLM.
+        4. Fallback to Local Knowledge Base.
+        5. Fallback to Safe Default (0 for unknown).
         """
+        # 1. Quick detection for zero-calorie common items
+        food_lower = food_query.lower()
+        if any(word in food_lower for word in ["water", "black coffee", "plain tea"]):
+            return {
+                "food_name": food_query.capitalize(),
+                "calories": 0,
+                "protein": 0,
+                "carbs": 0,
+                "fats": 0
+            }
+
         prompt = f"""
         Analyze the following food item or meal description and provide its estimated nutritional data (per standard serving).
         Return the result ONLY as a JSON object with these keys: 
@@ -105,13 +119,13 @@ class MealAgent:
                     "fats": meal["fats"]
                 }
         
-        # 4. Final Heuristic Fallback
+        # 5. Final Safe Fallback (Return 0 to avoid misleading the user)
         return {
             "food_name": food_query.capitalize(),
-            "calories": 350,
-            "protein": 20,
-            "carbs": 40,
-            "fats": 10
+            "calories": 0,
+            "protein": 0,
+            "carbs": 0,
+            "fats": 0
         }
 
     def _parse_json_response(self, text, default_name):

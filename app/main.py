@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -7,12 +8,14 @@ from app.db.database import get_db, engine
 from app.models.models import Base, User, BodyMetrics, DailyTarget, Meal, WeeklyAdjustment
 from app.models.schemas import (
     UserCreate, UserLogin, UserResponse, Token, MetricsCreate, 
-    MetricsResponse, MealCreate, MealResponse, TargetResponse,
-    MealEstimateRequest, MealScanRequest, MealScanResponse
+    MetricsResponse, MealCreate, MealUpdate, MealResponse, TargetResponse,
+    MealEstimateRequest, MealScanRequest, MealScanResponse,
+    ChatRequest, ChatResponse
 )
 from app.auth import get_password_hash, verify_password, create_access_token, get_current_user
 from app.agents.planner import PlannerAgent
 import uuid
+from uuid import UUID
 import datetime
 from typing import Optional
 
@@ -26,10 +29,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-planner = PlannerAgent()
+# Mount static files for generated images
+import os
+static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "static"))
+if not os.path.exists(static_dir):
+    try:
+        os.makedirs(os.path.join(static_dir, "generated"), exist_ok=True)
+    except:
+        pass
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+planner: Optional[PlannerAgent] = None
 
 @app.on_event("startup")
 async def startup():
+    global planner
+    try:
+        planner = PlannerAgent()
+    except Exception as e:
+        print(f"FAILED TO INITIALIZE PLANNER: {e}")
+    
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -185,6 +204,32 @@ async def get_meals(date: Optional[str] = None, db: AsyncSession = Depends(get_d
     )
     return result.scalars().all()
 
+@app.put("/meals/{meal_id}", response_model=MealResponse)
+async def update_meal(meal_id: UUID, meal: MealUpdate, db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
+    result = await db.execute(select(Meal).where(Meal.id == meal_id, Meal.user_id == uuid.UUID(current_user_id)))
+    db_meal = result.scalars().first()
+    if not db_meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    
+    update_data = meal.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_meal, key, value)
+    
+    await db.commit()
+    await db.refresh(db_meal)
+    return db_meal
+
+@app.delete("/meals/{meal_id}")
+async def delete_meal(meal_id: UUID, db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
+    result = await db.execute(select(Meal).where(Meal.id == meal_id, Meal.user_id == uuid.UUID(current_user_id)))
+    db_meal = result.scalars().first()
+    if not db_meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    
+    await db.delete(db_meal)
+    await db.commit()
+    return {"status": "success", "message": "Meal deleted"}
+
 @app.post("/progress/review")
 async def review_progress(db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
     # Fetch weight history (last 10 entries)
@@ -268,6 +313,54 @@ async def scan_meal(request: MealScanRequest, current_user_id: str = Depends(get
     if not result:
         raise HTTPException(status_code=500, detail="Image scan failed")
     return result
+
+@app.post("/coach/chat", response_model=ChatResponse)
+async def chat_with_coach(request: ChatRequest, db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
+    # 1. Fetch user context
+    user_result = await db.execute(select(User).where(User.id == uuid.UUID(current_user_id)))
+    user = user_result.scalars().first()
+    
+    # Fetch latest metrics for context
+    metrics_result = await db.execute(
+        select(BodyMetrics)
+        .where(BodyMetrics.user_id == user.id)
+        .order_by(desc(BodyMetrics.recorded_at))
+        .limit(1)
+    )
+    metrics = metrics_result.scalars().first()
+    
+    user_context = {
+        "name": user.name,
+        "goal": metrics.goal if metrics else "General Health",
+        "weight": metrics.weight if metrics else "Unknown",
+        "height": metrics.height if metrics else "Unknown",
+        "activity_level": metrics.activity_level if metrics else "Unknown"
+    }
+    
+    # 2. Fetch today's progress
+    today = datetime.date.today()
+    start_of_day = datetime.datetime.combine(today, datetime.time.min)
+    end_of_day = datetime.datetime.combine(today, datetime.time.max)
+    
+    meals_result = await db.execute(
+        select(Meal)
+        .where(Meal.user_id == user.id, Meal.timestamp >= start_of_day, Meal.timestamp <= end_of_day)
+    )
+    today_meals = meals_result.scalars().all()
+    
+    today_stats = {
+        "calories": sum(m.calories for m in today_meals),
+        "protein": sum(m.protein for m in today_meals),
+        "carbs": sum(m.carbs for m in today_meals),
+        "fats": sum(m.fats for m in today_meals),
+        "water": 0 # Assuming water volume is handled separately
+    }
+    
+    # 3. Call Chat Agent
+    history = [m.dict() for m in request.history]
+    text, meal_cards = await planner.chat_with_coach(request.message, history, user_context, today_stats)
+    
+    return {"content": text, "meal_cards": meal_cards}
 
 @app.get("/insights/habits")
 async def get_habit_insights(db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):

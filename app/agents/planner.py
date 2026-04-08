@@ -2,6 +2,7 @@ from app.agents.nutrition_agent import NutritionAgent
 from app.agents.meal_agent import MealAgent
 from app.agents.progress_agent import ProgressAgent
 from app.agents.habit_agent import HabitDetectionAgent
+from app.agents.coach_agent import CoachAgent
 
 class PlannerAgent:
     def __init__(self):
@@ -9,6 +10,7 @@ class PlannerAgent:
         self.meal_agent = MealAgent()
         self.progress_agent = ProgressAgent()
         self.habit_agent = HabitDetectionAgent()
+        self.coach_agent = CoachAgent()
 
     async def handle_metrics_update(self, user_id, metrics):
         """
@@ -77,3 +79,9 @@ class PlannerAgent:
         Use AI Vision to scan meal from an image.
         """
         return await self.meal_agent.scan_food_image(base64_image)
+
+    async def chat_with_coach(self, message: str, history: list, user_context: dict, today_stats: dict):
+        """
+        Speak to the AI Coach.
+        """
+        return await self.coach_agent.chat(message, history, user_context, today_stats)

@@ -59,6 +59,14 @@ class MealBase(BaseModel):
 class MealCreate(MealBase):
     pass
 
+class MealUpdate(MealBase):
+    meal_type: Optional[str] = None
+    food_name: Optional[str] = None
+    calories: Optional[float] = None
+    protein: Optional[float] = None
+    carbs: Optional[float] = None
+    fats: Optional[float] = None
+
 class MealResponse(MealBase):
     id: UUID
     timestamp: datetime
@@ -95,3 +103,15 @@ class MealScanResponse(BaseModel):
     carbs: float
     fats: float
     description: Optional[str] = None
+
+class ChatMessage(BaseModel):
+    role: str # 'user' or 'assistant'
+    content: str
+
+class ChatRequest(BaseModel):
+    message: str
+    history: List[ChatMessage] = []
+
+class ChatResponse(BaseModel):
+    content: str
+    meal_cards: Optional[List[dict]] = None
