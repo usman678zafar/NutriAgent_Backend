@@ -29,15 +29,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files for generated images
+# Mount static files for generated images with robust pathing
 import os
-static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "static"))
-if not os.path.exists(static_dir):
-    try:
-        os.makedirs(os.path.join(static_dir, "generated"), exist_ok=True)
-    except:
-        pass
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
+def setup_static_mount(app):
+    """Safely setup static directory and mount it."""
+    # Start from app/main.py location
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    backend_dir = os.path.dirname(current_dir)
+    repo_root = os.path.dirname(backend_dir)
+    
+    # Try multiple common locations
+    candidates = [
+        os.path.join(repo_root, "static"),
+        os.path.join(backend_dir, "static"),
+        os.path.join(current_dir, "static"),
+        "/static",  # Common container root
+        "/code/static" # HF standard
+    ]
+    
+    target_dir = None
+    for cand in candidates:
+        if os.path.exists(cand):
+            target_dir = cand
+            break
+            
+    if not target_dir:
+        # Try to create in repo root or backend dir
+        target_dir = os.path.join(repo_root, "static")
+        try:
+            os.makedirs(os.path.join(target_dir, "generated"), exist_ok=True)
+        except:
+            target_dir = os.path.join(backend_dir, "static")
+            try:
+                os.makedirs(os.path.join(target_dir, "generated"), exist_ok=True)
+            except:
+                # Fallback to current app directory
+                target_dir = os.path.join(current_dir, "static")
+                os.makedirs(os.path.join(target_dir, "generated"), exist_ok=True)
+
+    if os.path.exists(target_dir):
+        app.mount("/static", StaticFiles(directory=target_dir), name="static")
+        return target_dir
+    return None
+
+static_dir = setup_static_mount(app)
+if not static_dir:
+    print("CRITICAL WARNING: Static directory could not be mounted. Feature impact: image generation.")
 
 planner: Optional[PlannerAgent] = None
 
