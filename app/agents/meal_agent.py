@@ -54,12 +54,22 @@ class MealAgent:
     async def estimate_nutrients(self, food_query: str):
         """
         AI Agent reasoning: 
-        1. Check for basic items like water first.
-        2. Try NVIDIA LLM for global knowledge.
-        3. Fallback to Gemini LLM.
-        4. Fallback to Local Knowledge Base.
-        5. Fallback to Safe Default (0 for unknown).
+        1. Validate input.
+        2. Check for basic items like water first.
+        3. Try NVIDIA LLM for global knowledge.
+        4. Fallback to Gemini LLM.
+        5. Fallback to Local Knowledge Base.
+        6. Fallback to Safe Default (0 for unknown).
         """
+        # 0. Input validation
+        if not food_query or not isinstance(food_query, str):
+            raise ValueError("food_query must be a non-empty string")
+        food_query = food_query.strip()
+        if len(food_query) > 500:
+            raise ValueError("food_query is too long (max 500 characters)")
+        if len(food_query) < 2:
+            raise ValueError("food_query is too short — please describe the food")
+
         # 1. Quick detection for zero-calorie common items
         food_lower = food_query.lower()
         if any(word in food_lower for word in ["water", "black coffee", "plain tea"]):
@@ -129,20 +139,31 @@ class MealAgent:
         }
 
     def _parse_json_response(self, text, default_name):
-        # Clean up JSON formatting if present
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0].strip()
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0].strip()
-        
-        data = json.loads(text)
-        return {
-            "food_name": data.get("food_name", default_name.capitalize()),
-            "calories": float(data.get("calories", 0)),
-            "protein": float(data.get("protein", 0)),
-            "carbs": float(data.get("carbs", 0)),
-            "fats": float(data.get("fats", 0))
-        }
+        """Parse JSON from LLM response with graceful fallback."""
+        try:
+            # Clean up fenced code blocks
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+
+            # Some models wrap with extra prose — extract the JSON object
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1:
+                text = text[start:end + 1]
+
+            data = json.loads(text)
+            return {
+                "food_name": str(data.get("food_name", default_name)).capitalize(),
+                "calories": float(data.get("calories", 0)),
+                "protein":  float(data.get("protein",  0)),
+                "carbs":    float(data.get("carbs",    0)),
+                "fats":     float(data.get("fats",     0)),
+            }
+        except Exception as e:
+            print(f"JSON parse error: {e} | raw text: {text[:200]}")
+            return None   # caller will fall through to next strategy
 
     async def scan_food_image(self, base64_image: str):
         """
@@ -205,17 +226,43 @@ class MealAgent:
         return data
 
     def generate_meal_plan(self, target_calories, target_protein, target_carbs, target_fats):
+        """
+        Select meals that are closest to the per-meal macro budget.
+        Each meal type gets an equal share of the daily calorie target.
+        Best-fit is chosen by minimising the normalised Euclidean distance
+        to the per-meal budget in (protein, carbs, fats) space.
+        """
+        meal_types = ["breakfast", "lunch", "dinner", "snack"]
+        # Each meal gets roughly equal share (snack gets half)
+        weights = {"breakfast": 0.3, "lunch": 0.35, "dinner": 0.3, "snack": 0.05}
+
         plan = []
-        for meal_type in ["breakfast", "lunch", "dinner", "snack"]:
-            meal = random.choice(self.meal_database[meal_type])
-            calories = meal.get("calories", meal["protein"]*4 + meal["carbs"]*4 + meal["fats"]*9)
+        for meal_type in meal_types:
+            w = weights[meal_type]
+            budget_protein = target_protein * w
+            budget_carbs   = target_carbs   * w
+            budget_fats    = target_fats    * w
+
+            candidates = self.meal_database[meal_type]
+
+            def score(meal):
+                dp = (meal["protein"] - budget_protein) ** 2
+                dc = (meal["carbs"]   - budget_carbs)   ** 2
+                df = (meal["fats"]    - budget_fats)    ** 2
+                return dp + dc + df
+
+            best = min(candidates, key=score)
+            calories = best.get(
+                "calories",
+                best["protein"] * 4 + best["carbs"] * 4 + best["fats"] * 9
+            )
             plan.append({
                 "meal_type": meal_type,
-                "food_name": meal["name"],
-                "calories": round(calories),
-                "protein": meal["protein"],
-                "carbs": meal["carbs"],
-                "fats": meal["fats"]
+                "food_name": best["name"],
+                "calories":  round(calories),
+                "protein":   best["protein"],
+                "carbs":     best["carbs"],
+                "fats":      best["fats"],
             })
-        
+
         return plan

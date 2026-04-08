@@ -340,9 +340,15 @@ async def get_suggestions(db: AsyncSession = Depends(get_db), current_user_id: s
 
 @app.post("/meals/estimate", response_model=MealScanResponse)
 async def estimate_meal(request: MealEstimateRequest, current_user_id: str = Depends(get_current_user)):
-    # Delegate to AI Agent
-    estimation = await planner.estimate_meal(request.food)
-    return estimation
+    try:
+        estimation = await planner.estimate_meal(request.food)
+        if estimation is None:
+            raise HTTPException(status_code=422, detail="Could not estimate nutrition for that food. Try being more specific.")
+        return estimation
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 @app.post("/meals/scan", response_model=MealScanResponse)
 async def scan_meal(request: MealScanRequest, current_user_id: str = Depends(get_current_user)):
@@ -476,3 +482,65 @@ async def get_habit_insights(db: AsyncSession = Depends(get_db), current_user_id
         
     insights = await planner.handle_habit_check(meal_history, current_targets)
     return insights
+
+
+@app.get("/insights/trends")
+async def get_trends(
+    days: int = 30,
+    db: AsyncSession = Depends(get_db),
+    current_user_id: str = Depends(get_current_user)
+):
+    """
+    Returns day-by-day weight and nutrition data for charting.
+    Response shape:
+    {
+      "weight": [{"date": "YYYY-MM-DD", "value": float}, ...],
+      "nutrition": [{"date": "YYYY-MM-DD", "calories": float, "protein": float,
+                     "carbs": float, "fats": float}, ...]
+    }
+    """
+    import datetime as dt
+
+    days = max(7, min(days, 90))  # clamp 7–90
+    since = datetime.datetime.utcnow() - datetime.timedelta(days=days)
+
+    # Weight history
+    metrics_result = await db.execute(
+        select(BodyMetrics.weight, BodyMetrics.recorded_at)
+        .where(BodyMetrics.user_id == current_user_id,
+               BodyMetrics.recorded_at >= since)
+        .order_by(BodyMetrics.recorded_at.asc())
+        .limit(90)
+    )
+    weight_data = [
+        {"date": row.recorded_at.strftime("%Y-%m-%d"), "value": row.weight}
+        for row in metrics_result.all()
+    ]
+
+    # Daily nutrition aggregation
+    meals_result = await db.execute(
+        select(Meal)
+        .where(Meal.user_id == current_user_id,
+               Meal.timestamp >= since)
+        .order_by(Meal.timestamp.asc())
+        .limit(1000)
+    )
+    meals = meals_result.scalars().all()
+
+    daily_nutrition: dict = {}
+    for meal in meals:
+        day = meal.timestamp.strftime("%Y-%m-%d")
+        if day not in daily_nutrition:
+            daily_nutrition[day] = {"date": day, "calories": 0.0, "protein": 0.0, "carbs": 0.0, "fats": 0.0}
+        daily_nutrition[day]["calories"] += meal.calories
+        daily_nutrition[day]["protein"]  += meal.protein
+        daily_nutrition[day]["carbs"]    += meal.carbs
+        daily_nutrition[day]["fats"]     += meal.fats
+
+    # Round values for cleaner JSON
+    nutrition_data = [
+        {k: (round(v, 1) if isinstance(v, float) else v) for k, v in day_data.items()}
+        for day_data in sorted(daily_nutrition.values(), key=lambda x: x["date"])
+    ]
+
+    return {"weight": weight_data, "nutrition": nutrition_data}
