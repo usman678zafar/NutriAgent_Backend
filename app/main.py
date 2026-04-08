@@ -5,12 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import desc
 from app.db.database import get_db, engine
-from app.models.models import Base, User, BodyMetrics, DailyTarget, Meal, WeeklyAdjustment
+from app.models.models import Base, User, BodyMetrics, DailyTarget, Meal, WeeklyAdjustment, ChatHistory
 from app.models.schemas import (
     UserCreate, UserLogin, UserResponse, Token, MetricsCreate, 
     MetricsResponse, MealCreate, MealUpdate, MealResponse, TargetResponse,
     MealEstimateRequest, MealScanRequest, MealScanResponse,
-    ChatRequest, ChatResponse
+    ChatRequest, ChatResponse, ChatHistoryResponse
 )
 from app.auth import get_password_hash, verify_password, create_access_token, get_current_user
 from app.agents.planner import PlannerAgent
@@ -352,13 +352,24 @@ async def scan_meal(request: MealScanRequest, current_user_id: str = Depends(get
         raise HTTPException(status_code=500, detail="Image scan failed")
     return result
 
+@app.get("/coach/history", response_model=list[ChatHistoryResponse])
+async def get_chat_history(db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
+    """Load the last 50 messages for this user from the DB."""
+    result = await db.execute(
+        select(ChatHistory)
+        .where(ChatHistory.user_id == uuid.UUID(current_user_id))
+        .order_by(ChatHistory.timestamp.asc())
+        .limit(50)
+    )
+    return result.scalars().all()
+
 @app.post("/coach/chat", response_model=ChatResponse)
 async def chat_with_coach(request: ChatRequest, db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
     # 1. Fetch user context
     user_result = await db.execute(select(User).where(User.id == uuid.UUID(current_user_id)))
     user = user_result.scalars().first()
-    
-    # Fetch latest metrics for context
+
+    # Fetch latest metrics
     metrics_result = await db.execute(
         select(BodyMetrics)
         .where(BodyMetrics.user_id == user.id)
@@ -366,7 +377,7 @@ async def chat_with_coach(request: ChatRequest, db: AsyncSession = Depends(get_d
         .limit(1)
     )
     metrics = metrics_result.scalars().first()
-    
+
     user_context = {
         "name": user.name,
         "goal": metrics.goal if metrics else "General Health",
@@ -374,30 +385,70 @@ async def chat_with_coach(request: ChatRequest, db: AsyncSession = Depends(get_d
         "height": metrics.height if metrics else "Unknown",
         "activity_level": metrics.activity_level if metrics else "Unknown"
     }
-    
-    # 2. Fetch today's progress
+
+    # Fetch today's meals
     today = datetime.date.today()
     start_of_day = datetime.datetime.combine(today, datetime.time.min)
     end_of_day = datetime.datetime.combine(today, datetime.time.max)
-    
     meals_result = await db.execute(
-        select(Meal)
-        .where(Meal.user_id == user.id, Meal.timestamp >= start_of_day, Meal.timestamp <= end_of_day)
+        select(Meal).where(Meal.user_id == user.id, Meal.timestamp >= start_of_day, Meal.timestamp <= end_of_day)
     )
     today_meals = meals_result.scalars().all()
-    
     today_stats = {
         "calories": sum(m.calories for m in today_meals),
         "protein": sum(m.protein for m in today_meals),
         "carbs": sum(m.carbs for m in today_meals),
         "fats": sum(m.fats for m in today_meals),
-        "water": 0 # Assuming water volume is handled separately
     }
-    
-    # 3. Call Chat Agent
-    history = [m.dict() for m in request.history]
-    text, meal_cards = await planner.chat_with_coach(request.message, history, user_context, today_stats)
-    
+
+    # Fetch current targets for remaining macro context
+    targets_result = await db.execute(
+        select(DailyTarget)
+        .where(DailyTarget.user_id == user.id)
+        .order_by(desc(DailyTarget.date))
+        .limit(1)
+    )
+    current_targets = targets_result.scalars().first()
+    targets_dict = {
+        "calories": current_targets.calories if current_targets else 0,
+        "protein": current_targets.protein if current_targets else 0,
+        "carbs": current_targets.carbs if current_targets else 0,
+        "fats": current_targets.fats if current_targets else 0,
+    }
+
+    # 2. Load persistent history from DB (last 20 messages)
+    history_result = await db.execute(
+        select(ChatHistory)
+        .where(ChatHistory.user_id == uuid.UUID(current_user_id))
+        .order_by(ChatHistory.timestamp.asc())
+        .limit(20)
+    )
+    db_history = history_result.scalars().all()
+    history = [{"role": h.role, "content": h.content} for h in db_history]
+
+    # 3. Save user message to DB
+    user_msg = ChatHistory(
+        user_id=uuid.UUID(current_user_id),
+        role="user",
+        content=request.message
+    )
+    db.add(user_msg)
+    await db.flush()  # save without committing so we can attach assistant reply atomically
+
+    # 4. Call Coach Agent
+    text, meal_cards = await planner.chat_with_coach(
+        request.message, history, user_context, today_stats, targets_dict
+    )
+
+    # 5. Save assistant reply to DB
+    assistant_msg = ChatHistory(
+        user_id=uuid.UUID(current_user_id),
+        role="assistant",
+        content=text
+    )
+    db.add(assistant_msg)
+    await db.commit()
+
     return {"content": text, "meal_cards": meal_cards}
 
 @app.get("/insights/habits")

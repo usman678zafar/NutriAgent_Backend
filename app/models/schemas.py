@@ -117,3 +117,11 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     content: str
     meal_cards: Optional[List[dict]] = None
+
+class ChatHistoryResponse(BaseModel):
+    id: UUID
+    role: str
+    content: str
+    timestamp: datetime
+    class Config:
+        from_attributes = True

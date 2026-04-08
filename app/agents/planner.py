@@ -80,8 +80,8 @@ class PlannerAgent:
         """
         return await self.meal_agent.scan_food_image(base64_image)
 
-    async def chat_with_coach(self, message: str, history: list, user_context: dict, today_stats: dict):
+    async def chat_with_coach(self, message: str, history: list, user_context: dict, today_stats: dict, targets: dict = None):
         """
         Speak to the AI Coach.
         """
-        return await self.coach_agent.chat(message, history, user_context, today_stats)
+        return await self.coach_agent.chat(message, history, user_context, today_stats, targets or {})

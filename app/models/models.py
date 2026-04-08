@@ -18,6 +18,7 @@ class User(Base):
     meals = relationship("Meal", back_populates="user")
     targets = relationship("DailyTarget", back_populates="user")
     adjustments = relationship("WeeklyAdjustment", back_populates="user")
+    chat_history = relationship("ChatHistory", back_populates="user")
 
 class BodyMetrics(Base):
     __tablename__ = "body_metrics"
@@ -71,3 +72,13 @@ class WeeklyAdjustment(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     user = relationship("User", back_populates="adjustments")
+
+class ChatHistory(Base):
+    __tablename__ = "chat_history"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    role = Column(String, nullable=False)  # 'user' or 'assistant'
+    content = Column(Text, nullable=False)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+
+    user = relationship("User", back_populates="chat_history")
