@@ -56,6 +56,7 @@ class MealBase(BaseModel):
     protein: float
     carbs: float
     fats: float
+    volume: Optional[float] = 0
     source: Optional[str] = "manual"
 
 class MealCreate(MealBase):
@@ -68,6 +69,7 @@ class MealUpdate(MealBase):
     protein: Optional[float] = None
     carbs: Optional[float] = None
     fats: Optional[float] = None
+    volume: Optional[float] = None
 
 class MealResponse(MealBase):
     id: UUID
@@ -104,6 +106,7 @@ class MealScanResponse(BaseModel):
     protein: float
     carbs: float
     fats: float
+    volume: Optional[float] = 0
     description: Optional[str] = None
 
 class ChatMessage(BaseModel):

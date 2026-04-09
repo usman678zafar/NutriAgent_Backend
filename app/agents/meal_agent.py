@@ -78,7 +78,8 @@ class MealAgent:
                 "calories": 0,
                 "protein": 0,
                 "carbs": 0,
-                "fats": 0
+                "fats": 0,
+                "volume": 250
             }
 
         prompt = f"""
@@ -160,6 +161,7 @@ class MealAgent:
                 "protein":  float(data.get("protein",  0)),
                 "carbs":    float(data.get("carbs",    0)),
                 "fats":     float(data.get("fats",     0)),
+                "volume":   float(data.get("volume",   0)),
             }
         except Exception as e:
             print(f"JSON parse error: {e} | raw text: {text[:200]}")

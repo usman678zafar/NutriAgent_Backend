@@ -89,33 +89,26 @@ async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+
 @app.get("/")
 async def root():
     return {"message": "NutriAgent API is up and running! 🥑", "status": "healthy"}
 
 @app.post("/auth/register", response_model=UserResponse)
 async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
-    import traceback
-    try:
-        result = await db.execute(select(User).where(User.email == user.email))
-        if result.scalars().first():
-            raise HTTPException(status_code=400, detail="Email already registered")
-        
-        db_user = User(
-            name=user.name,
-            email=user.email,
-            password_hash=get_password_hash(user.password)
-        )
-        db.add(db_user)
-        await db.commit()
-        await db.refresh(db_user)
-        return db_user
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"REGISTER ERROR: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+    result = await db.execute(select(User).where(User.email == user.email))
+    if result.scalars().first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    db_user = User(
+        name=user.name,
+        email=user.email,
+        password_hash=get_password_hash(user.password)
+    )
+    db.add(db_user)
+    await db.commit()
+    await db.refresh(db_user)
+    return db_user
 
 @app.post("/auth/login", response_model=Token)
 async def login(user: UserLogin, db: AsyncSession = Depends(get_db)):
@@ -179,9 +172,10 @@ async def update_metrics(metrics: MetricsCreate, db: AsyncSession = Depends(get_
 
 @app.get("/targets/current", response_model=TargetResponse)
 async def get_current_targets(db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
+    user_uuid = uuid.UUID(current_user_id)
     result = await db.execute(
         select(DailyTarget)
-        .where(DailyTarget.user_id == current_user_id)
+        .where(DailyTarget.user_id == user_uuid)
         .order_by(desc(DailyTarget.date))
         .limit(1)
     )
@@ -192,9 +186,10 @@ async def get_current_targets(db: AsyncSession = Depends(get_db), current_user_i
 
 @app.get("/metrics/current", response_model=MetricsResponse)
 async def get_current_metrics(db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
+    user_uuid = uuid.UUID(current_user_id)
     result = await db.execute(
         select(BodyMetrics)
-        .where(BodyMetrics.user_id == current_user_id)
+        .where(BodyMetrics.user_id == user_uuid)
         .order_by(desc(BodyMetrics.recorded_at))
         .limit(1)
     )
@@ -205,9 +200,10 @@ async def get_current_metrics(db: AsyncSession = Depends(get_db), current_user_i
 
 @app.get("/metrics/history")
 async def get_metrics_history(db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
+    user_uuid = uuid.UUID(current_user_id)
     result = await db.execute(
         select(BodyMetrics)
-        .where(BodyMetrics.user_id == current_user_id)
+        .where(BodyMetrics.user_id == user_uuid)
         .order_by(BodyMetrics.recorded_at.asc())
         .limit(30)
     )
@@ -217,7 +213,7 @@ async def get_metrics_history(db: AsyncSession = Depends(get_db), current_user_i
 async def log_meal(meal: MealCreate, db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
     meal_data = meal.dict()
     meal_data["meal_type"] = meal_data["meal_type"].lower()
-    db_meal = Meal(**meal_data, user_id=current_user_id)
+    db_meal = Meal(**meal_data, user_id=uuid.UUID(current_user_id))
     db.add(db_meal)
     await db.commit()
     await db.refresh(db_meal)
@@ -236,9 +232,11 @@ async def get_meals(date: Optional[str] = None, db: AsyncSession = Depends(get_d
     start_of_day = datetime.datetime.combine(target_date, datetime.time.min)
     end_of_day = datetime.datetime.combine(target_date, datetime.time.max)
     
+    user_uuid = uuid.UUID(current_user_id)
+    
     result = await db.execute(
         select(Meal)
-        .where(Meal.user_id == current_user_id, Meal.timestamp >= start_of_day, Meal.timestamp <= end_of_day)
+        .where(Meal.user_id == user_uuid, Meal.timestamp >= start_of_day, Meal.timestamp <= end_of_day)
     )
     return result.scalars().all()
 
@@ -271,9 +269,10 @@ async def delete_meal(meal_id: UUID, db: AsyncSession = Depends(get_db), current
 @app.post("/progress/review")
 async def review_progress(db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
     # Fetch weight history (last 10 entries)
+    user_uuid = uuid.UUID(current_user_id)
     weights_result = await db.execute(
         select(BodyMetrics.weight)
-        .where(BodyMetrics.user_id == current_user_id)
+        .where(BodyMetrics.user_id == user_uuid)
         .order_by(desc(BodyMetrics.recorded_at))
         .limit(10)
     )
@@ -291,7 +290,7 @@ async def review_progress(db: AsyncSession = Depends(get_db), current_user_id: s
     # Fetch user goal
     metrics_result = await db.execute(
         select(BodyMetrics.goal)
-        .where(BodyMetrics.user_id == current_user_id)
+        .where(BodyMetrics.user_id == user_uuid)
         .order_by(desc(BodyMetrics.recorded_at))
         .limit(1)
     )
@@ -304,14 +303,14 @@ async def review_progress(db: AsyncSession = Depends(get_db), current_user_id: s
     
     if adjustment:
         # Save adjustment
-        db_adj = WeeklyAdjustment(**adjustment)
+        db_adj = WeeklyAdjustment(**adjustment, user_id=user_uuid)
         db.add(db_adj)
         
         # Update daily targets (simplified: keep macros same ratio)
         # In a real app, logic would be more complex
         scale = adjustment["new_calories"] / adjustment["previous_calories"]
         new_target = DailyTarget(
-            user_id=current_user_id,
+            user_id=user_uuid,
             calories=adjustment["new_calories"],
             protein=current_targets.protein * scale,
             carbs=current_targets.carbs * scale,
@@ -325,9 +324,10 @@ async def review_progress(db: AsyncSession = Depends(get_db), current_user_id: s
 
 @app.get("/meals/suggestions")
 async def get_suggestions(db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
+    user_uuid = uuid.UUID(current_user_id)
     result = await db.execute(
         select(DailyTarget)
-        .where(DailyTarget.user_id == current_user_id)
+        .where(DailyTarget.user_id == user_uuid)
         .order_by(desc(DailyTarget.date))
         .limit(1)
     )
@@ -460,9 +460,10 @@ async def chat_with_coach(request: ChatRequest, db: AsyncSession = Depends(get_d
 @app.get("/insights/habits")
 async def get_habit_insights(db: AsyncSession = Depends(get_db), current_user_id: str = Depends(get_current_user)):
     # Fetch last 30 meals
+    user_uuid = uuid.UUID(current_user_id)
     meals_result = await db.execute(
         select(Meal)
-        .where(Meal.user_id == current_user_id)
+        .where(Meal.user_id == user_uuid)
         .order_by(desc(Meal.timestamp))
         .limit(30)
     )
@@ -471,7 +472,7 @@ async def get_habit_insights(db: AsyncSession = Depends(get_db), current_user_id
     # Fetch current targets
     targets_result = await db.execute(
         select(DailyTarget)
-        .where(DailyTarget.user_id == current_user_id)
+        .where(DailyTarget.user_id == user_uuid)
         .order_by(desc(DailyTarget.date))
         .limit(1)
     )
@@ -505,9 +506,10 @@ async def get_trends(
     since = datetime.datetime.utcnow() - datetime.timedelta(days=days)
 
     # Weight history
+    user_uuid = uuid.UUID(current_user_id)
     metrics_result = await db.execute(
         select(BodyMetrics.weight, BodyMetrics.recorded_at)
-        .where(BodyMetrics.user_id == current_user_id,
+        .where(BodyMetrics.user_id == user_uuid,
                BodyMetrics.recorded_at >= since)
         .order_by(BodyMetrics.recorded_at.asc())
         .limit(90)
@@ -520,7 +522,7 @@ async def get_trends(
     # Daily nutrition aggregation
     meals_result = await db.execute(
         select(Meal)
-        .where(Meal.user_id == current_user_id,
+        .where(Meal.user_id == user_uuid,
                Meal.timestamp >= since)
         .order_by(Meal.timestamp.asc())
         .limit(1000)
